@@ -1,0 +1,101 @@
+package interfaceshttpmiddleware
+
+import (
+	"crypto/subtle"
+	"net/http"
+	infrajwt "social/internal/infra/jwt"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+)
+
+const ContextUserIDKey = "auth_user_id"
+const ContextRoleKey = "auth_role"
+
+// NewJWTAuth 返回 Gin 鉴权中间件，负责解析 Bearer token 并写入用户上下文。
+func NewJWTAuth(jwtManager *infrajwt.Manager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		header := strings.TrimSpace(c.GetHeader("Authorization"))
+		if header == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"message": "authorization header is required",
+			})
+			return
+		}
+
+		// Authorization 标准格式为：Bearer <access_token>。
+		parts := strings.SplitN(header, " ", 2)
+		if len(parts) != 2 {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"message": "authorization format must be Bearer <token>",
+			})
+			return
+		}
+		if !strings.EqualFold(strings.TrimSpace(parts[0]), "Bearer") {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"message": "authorization scheme must be Bearer",
+			})
+			return
+		}
+
+		token := strings.TrimSpace(parts[1])
+		claims, err := jwtManager.ParseAndValidateToken(token, infrajwt.TokenTypeAccess)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"message": "invalid access token",
+			})
+			return
+		}
+
+		// 后续 Handler 从 gin.Context 中读取用户 ID 和角色，避免重复解析 JWT。
+		c.Set(ContextUserIDKey, claims.UserID)
+		c.Set(ContextRoleKey, claims.Role)
+		c.Next()
+	}
+}
+
+// NewInternalTokenAuth 校验内部服务调用使用的 X-Internal-Token。
+func NewInternalTokenAuth(token string) gin.HandlerFunc {
+	token = strings.TrimSpace(token)
+	return func(c *gin.Context) {
+		if token == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"message": "internal token is required",
+			})
+			return
+		}
+		provided := strings.TrimSpace(c.GetHeader("X-Internal-Token"))
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"message": "invalid internal token",
+			})
+			return
+		}
+		c.Next()
+	}
+}
+
+// NewOptionalJWTAuth 在公共接口中补充可选登录身份，适合 Feed 个性化场景。
+func NewOptionalJWTAuth(jwtManager *infrajwt.Manager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		header := strings.TrimSpace(c.GetHeader("Authorization"))
+		if header == "" {
+			c.Next()
+			return
+		}
+
+		parts := strings.SplitN(header, " ", 2)
+		if len(parts) != 2 || !strings.EqualFold(strings.TrimSpace(parts[0]), "Bearer") {
+			c.Next()
+			return
+		}
+
+		token := strings.TrimSpace(parts[1])
+		claims, err := jwtManager.ParseAndValidateToken(token, infrajwt.TokenTypeAccess)
+		if err == nil {
+			c.Set(ContextUserIDKey, claims.UserID)
+			c.Set(ContextRoleKey, claims.Role)
+		}
+		c.Next()
+	}
+}

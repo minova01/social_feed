@@ -1,0 +1,5 @@
+.DS_Store
+.env
+apps/api/uploads/*
+apps/web/dist
+apps/web/node_modules
