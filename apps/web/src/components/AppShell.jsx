@@ -1,4 +1,4 @@
-const nav = [{ path: "/following", label: "关注", icon: "⌂" }, { path: "/hot", label: "热门", icon: "⌁" }, { path: "/compose", label: "发布", icon: "+" }, { path: "/messages", label: "消息", icon: "◇" }, { path: "/me", label: "我的", icon: "○" }];
+const nav = [{ path: "/following", label: "关注", icon: "⌂" }, { path: "/hot", label: "热门", icon: "⌁" }, { path: "/search", label: "搜索", icon: "⌕" }, { path: "/compose", label: "发布", icon: "+" }, { path: "/messages", label: "消息", icon: "◇" }, { path: "/me", label: "我的", icon: "○" }];
 
 export default function AppShell({ route, user, unread, children, navigate, logout }) {
   return <div className="app-frame">

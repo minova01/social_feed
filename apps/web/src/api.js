@@ -35,6 +35,7 @@ const realApi = {
   updateProfile: (body, token) => request("/api/users/me/update", { token, body }),
   followingFeed: (token) => request("/api/feed/following", { token, body: { limit: 20 } }),
   hotFeed: (token) => request("/api/feed/hot", { token, body: { limit: 20, offset: 0 } }),
+  searchPosts: (keyword, token) => request("/api/posts/search", { token, body: { keyword, limit: 20, offset: 0 } }),
   myPosts: (token) => request("/api/posts/list-mine", { token, body: { limit: 50, offset: 0 } }),
   userPosts: (id) => request("/api/posts/list", { body: { author_id: Number(id), limit: 50, offset: 0 } }),
   upload,

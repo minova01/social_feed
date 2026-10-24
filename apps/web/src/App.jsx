@@ -5,6 +5,7 @@ import AuthPage from "./pages/AuthPage.jsx";
 import FeedPage from "./pages/FeedPage.jsx";
 import MessagesPage from "./pages/MessagesPage.jsx";
 import ProfilePage from "./pages/ProfilePage.jsx";
+import SearchPage from "./pages/SearchPage.jsx";
 
 const TOKEN_KEY = "social.accessToken";
 const USER_KEY = "social.user";
@@ -31,6 +32,7 @@ export default function App() {
   if (publicMatch) page = <ProfilePage userId={publicMatch[1]} session={session} navigate={navigate} />;
   else if (route === "/me") page = token ? <ProfilePage session={session} navigate={navigate} /> : <AuthPage onAuth={setAuth} navigate={navigate} />;
   else if (route === "/messages") page = <MessagesPage token={token} onRead={refreshUnread} navigate={navigate} />;
+  else if (route === "/search") page = <SearchPage session={session} navigate={navigate} />;
   else if (route === "/compose") page = token ? <FeedPage compose scene="following" session={session} navigate={navigate} /> : <AuthPage onAuth={setAuth} navigate={navigate} />;
   else page = <FeedPage scene={route === "/following" ? "following" : "hot"} session={session} navigate={navigate} />;
 

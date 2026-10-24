@@ -30,6 +30,7 @@ export const mockApi = {
   updateProfile: async (body) => { currentUser = { ...currentUser, ...body }; return delay(currentUser); },
   followingFeed: async () => delay({ items: posts }),
   hotFeed: async () => delay({ items: [...posts].sort((a, b) => b.like_count - a.like_count) }),
+  searchPosts: async (keyword) => delay({ items: posts.filter((post) => post.content.toLocaleLowerCase().includes(keyword.trim().toLocaleLowerCase())), limit: 20, offset: 0 }),
   myPosts: async () => delay({ items: posts.filter((post) => post.author_id === 1).map(normalizeOwnPost) }),
   userPosts: async (id) => delay({ items: posts.filter((post) => post.author_id === Number(id)).map(normalizeOwnPost) }),
   upload: async (file) => delay({ url: URL.createObjectURL(file), kind: "post", filename: file.name, size: file.size }),
