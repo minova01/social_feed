@@ -61,24 +61,6 @@ var (
 		[]string{"scene"},
 	)
 
-	FeedCacheRequestsTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "social",
-			Name:      "feed_cache_requests_total",
-			Help:      "Feed cache reads by cache area and result.",
-		},
-		[]string{"area", "result"},
-	)
-
-	FeedCacheWritesTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "social",
-			Name:      "feed_cache_writes_total",
-			Help:      "Feed cache writes by cache area and result.",
-		},
-		[]string{"area", "result"},
-	)
-
 	UploadTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "social",
@@ -125,8 +107,6 @@ func init() {
 		FeedRequestsTotal,
 		FeedRequestDuration,
 		FeedItemsTotal,
-		FeedCacheRequestsTotal,
-		FeedCacheWritesTotal,
 		UploadTotal,
 		UploadDuration,
 		WorkerJobsTotal,
@@ -141,8 +121,11 @@ func HTTPMiddleware() gin.HandlerFunc {
 		c.Next()
 
 		route := c.FullPath()
+		if route == "/health" || route == "/metrics" {
+			return
+		}
 		if route == "" {
-			route = c.Request.URL.Path
+			route = "unmatched"
 		}
 		status := strconv.Itoa(c.Writer.Status())
 		method := c.Request.Method
@@ -184,29 +167,6 @@ func ObserveFeed(scene string, duration time.Duration, itemCount int, err error)
 	if err == nil && itemCount > 0 {
 		FeedItemsTotal.WithLabelValues(scene).Add(float64(itemCount))
 	}
-}
-
-func ObserveCacheRead(area string, requested int, hit int, err error) {
-	area = normalizeLabel(area, "unknown")
-	if err != nil {
-		FeedCacheRequestsTotal.WithLabelValues(area, "error").Inc()
-		return
-	}
-	if hit > 0 {
-		FeedCacheRequestsTotal.WithLabelValues(area, "hit").Add(float64(hit))
-	}
-	miss := requested - hit
-	if miss > 0 {
-		FeedCacheRequestsTotal.WithLabelValues(area, "miss").Add(float64(miss))
-	}
-}
-
-func ObserveCacheWrite(area string, count int, err error) {
-	area = normalizeLabel(area, "unknown")
-	if count <= 0 {
-		count = 1
-	}
-	FeedCacheWritesTotal.WithLabelValues(area, resultLabel(err)).Add(float64(count))
 }
 
 func ObserveUpload(kind string, duration time.Duration, err error) {

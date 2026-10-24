@@ -4,7 +4,9 @@ import (
 	"net/http"
 	applicationfeed "social/internal/application/feed"
 	domainpost "social/internal/domain/post"
+	inframetrics "social/internal/infra/metrics"
 	interfaceshttpmiddleware "social/internal/interfaces/http/middleware"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -33,7 +35,13 @@ func (h *Handler) ListFollowingPosts(c *gin.Context) {
 	if req.Limit == 0 {
 		req.Limit = 20
 	}
+	start := time.Now()
 	result, err := h.followingPost.List(c.Request.Context(), viewerID, req.Limit)
+	itemCount := 0
+	if result != nil {
+		itemCount = len(result.Items)
+	}
+	inframetrics.ObserveFeed("following", time.Since(start), itemCount, err)
 	if err != nil {
 		writeFeedError(c, err)
 		return
@@ -51,7 +59,13 @@ func (h *Handler) ListHotPosts(c *gin.Context) {
 		req.Limit = 20
 	}
 	viewerID, _ := viewerIDFromContext(c)
+	start := time.Now()
 	result, err := h.hotPost.List(c.Request.Context(), viewerID, req.Limit, req.Offset)
+	itemCount := 0
+	if result != nil {
+		itemCount = len(result.Items)
+	}
+	inframetrics.ObserveFeed("hot", time.Since(start), itemCount, err)
 	if err != nil {
 		writeFeedError(c, err)
 		return
