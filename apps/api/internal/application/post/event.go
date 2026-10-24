@@ -1,9 +1,9 @@
 package applicationpost
 
-type PublishedEvent struct {
+type PostEvent struct {
 	PostID int64 `json:"post_id"`
 }
 
-func NewPublishedEvent(postID int64) *PublishedEvent {
-	return &PublishedEvent{PostID: postID}
+func NewPostEvent(postID int64) *PostEvent {
+	return &PostEvent{PostID: postID}
 }

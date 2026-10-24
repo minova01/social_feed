@@ -8,6 +8,7 @@ type Config struct {
 	Database DatabaseConfig
 	Redis    RedisConfig
 	RabbitMQ RabbitMQConfig
+	Search   SearchConfig
 	Upload   UploadConfig
 }
 
@@ -41,6 +42,11 @@ type RedisConfig struct {
 // RabbitMQConfig 保存 RabbitMQ 连接和队列配置。
 type RabbitMQConfig struct {
 	URL string
+}
+
+type SearchConfig struct {
+	URL   string
+	Index string
 }
 
 // UploadConfig 保存本地上传目录和对外访问前缀。

@@ -12,6 +12,7 @@ import (
 )
 
 const defaultListLimit = 20
+const defaultSearchLimit = 20
 
 type Handler struct {
 	service *applicationpost.Service
@@ -114,6 +115,46 @@ func (h *Handler) ListMine(c *gin.Context) {
 		return
 	}
 	h.list(c, userID, normalizeLimit(req.Limit), req.Offset)
+}
+
+func (h *Handler) Search(c *gin.Context) {
+	var req searchPostRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	req.Keyword = strings.TrimSpace(req.Keyword)
+	if req.Keyword == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "search keyword is required"})
+		return
+	}
+	if req.Limit == 0 {
+		req.Limit = defaultSearchLimit
+	}
+	viewerID, _ := userIDFromContext(c)
+	items, err := h.service.Search(c.Request.Context(), viewerID, req.Keyword, req.Limit, req.Offset)
+	if err != nil {
+		writePostError(c, err)
+		return
+	}
+	responses := make([]searchPostItemResponse, 0, len(items))
+	for _, item := range items {
+		responses = append(responses, searchPostItemResponse{
+			PostID:          item.PostID,
+			AuthorID:        item.AuthorID,
+			AuthorNickname:  item.AuthorNickname,
+			AuthorAvatarURL: item.AuthorAvatarURL,
+			Content:         item.Content,
+			ImageURLs:       append([]string(nil), item.ImageURLs...),
+			LikeCount:       item.LikeCount,
+			CommentCount:    item.CommentCount,
+			FavoriteCount:   item.FavoriteCount,
+			Liked:           item.Liked,
+			Favorited:       item.Favorited,
+			PublishedAt:     item.PublishedAt,
+		})
+	}
+	c.JSON(http.StatusOK, searchPostResponse{Items: responses, Limit: req.Limit, Offset: req.Offset})
 }
 
 func (h *Handler) list(c *gin.Context, authorID int64, limit int, offset int) {

@@ -15,6 +15,7 @@ import (
 	inframq "social/internal/infra/mq"
 	migration "social/internal/infra/persistence/migration"
 	infrapost "social/internal/infra/persistence/post"
+	infrasearch "social/internal/infra/search"
 
 	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -45,6 +46,13 @@ func main() {
 	if err := migration.AutoMigrate(gormDB); err != nil {
 		log.Fatalf("auto migrate failed: %v", err)
 	}
+	searchClient, err := infrasearch.New(cfg.Search)
+	if err != nil {
+		log.Fatalf("init elasticsearch client failed: %v", err)
+	}
+	if err := searchClient.EnsureIndex(context.Background()); err != nil {
+		log.Fatalf("ensure elasticsearch index failed: %v", err)
+	}
 
 	rabbitMQ, err := inframq.NewRabbitMQ(cfg.RabbitMQ)
 	if err != nil {
@@ -60,7 +68,7 @@ func main() {
 		}
 	}()
 
-	if err := startWorkers(ctx, cfg, gormDB, rabbitMQ); err != nil {
+	if err := startWorkers(ctx, cfg, gormDB, rabbitMQ, searchClient); err != nil {
 		log.Fatalf("start workers failed: %v", err)
 	}
 	log.Println("social worker is running")
@@ -68,11 +76,15 @@ func main() {
 	log.Println("social worker stopped")
 }
 
-func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB, rabbitMQ *inframq.RabbitMQ) error {
+func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB, rabbitMQ *inframq.RabbitMQ, searchClient *infrasearch.Client) error {
 	redisClient := infracache.NewRedisClient(cfg.Redis)
 	feedCache := infracache.NewFeedCache(redisClient)
 
 	postRepo := infrapost.New(gormDB)
+	postSearchWorker := applicationpost.NewSearchWorker(postRepo, rabbitMQ, searchClient)
+	if err := postSearchWorker.Start(ctx); err != nil {
+		return err
+	}
 	postFanoutWorker := applicationpost.NewFanoutWorker(postRepo, rabbitMQ, feedCache)
 	return postFanoutWorker.Start(ctx)
 }

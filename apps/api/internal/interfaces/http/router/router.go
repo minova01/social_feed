@@ -3,7 +3,6 @@ package interfaceshttprouter
 import (
 	"context"
 	"database/sql"
-	"log"
 	applicationaccount "social/internal/application/account"
 	applicationfeed "social/internal/application/feed"
 	applicationinteraction "social/internal/application/interaction"
@@ -21,6 +20,7 @@ import (
 	migration "social/internal/infra/persistence/migration"
 	infrapost "social/internal/infra/persistence/post"
 	infrarelation "social/internal/infra/persistence/relation"
+	infrasearch "social/internal/infra/search"
 	interfaceshttpaccount "social/internal/interfaces/http/account"
 	interfaceshttpfeed "social/internal/interfaces/http/feed"
 	interfaceshttpinteraction "social/internal/interfaces/http/interaction"
@@ -52,18 +52,21 @@ func Register(g *gin.Engine, cfg *infraconfig.Config, db *sql.DB) error {
 	accountHandler := interfaceshttpaccount.New(applicationaccount.New(infraaccount.New(gormDB), jwtManager))
 	postRepo := infrapost.New(gormDB)
 	postOptions := []applicationpost.Option{}
+	searchClient, err := infrasearch.New(cfg.Search)
+	if err != nil {
+		return err
+	}
+	postOptions = append(postOptions, applicationpost.WithSearchIndex(searchClient))
 	var feedCache *infracache.FeedCache
 	if cfg.Redis.Addr != "" {
 		feedCache = infracache.NewFeedCache(infracache.NewRedisClient(cfg.Redis))
 		postOptions = append(postOptions, applicationpost.WithStatReader(feedCache))
 	}
-	if cfg.RabbitMQ.URL != "" {
-		if rabbitMQ, rabbitErr := inframq.NewRabbitMQ(cfg.RabbitMQ); rabbitErr != nil {
-			log.Printf("rabbitmq disabled: %v", rabbitErr)
-		} else {
-			postOptions = append(postOptions, applicationpost.WithPublishedEventPublisher(rabbitMQ))
-		}
+	rabbitMQ, err := inframq.NewRabbitMQ(cfg.RabbitMQ)
+	if err != nil {
+		return err
 	}
+	postOptions = append(postOptions, applicationpost.WithPostEventPublisher(rabbitMQ))
 	postHandler := interfaceshttppost.New(applicationpost.New(postRepo, postOptions...))
 	followingPostService := applicationfeed.NewFollowingPostService(postRepo, feedCache)
 	hotPostService := applicationfeed.NewHotPostService(postRepo, feedCache)
@@ -110,6 +113,7 @@ func Register(g *gin.Engine, cfg *infraconfig.Config, db *sql.DB) error {
 	posts.POST("/delete", auth, postHandler.Delete)
 	posts.POST("/list", postHandler.ListByAuthor)
 	posts.POST("/list-mine", auth, postHandler.ListMine)
+	posts.POST("/search", optionalAuth, postHandler.Search)
 	posts.POST("/like", auth, interactionHandler.LikePost)
 	posts.POST("/unlike", auth, interactionHandler.UnlikePost)
 	posts.POST("/favorite", auth, interactionHandler.FavoritePost)

@@ -10,8 +10,8 @@ const defaultFollowerBatchSize = 500
 const defaultInboxMaxLen int64 = 1000
 const defaultOutboxMaxLen int64 = 500
 
-type PublishedEventConsumer interface {
-	ConsumePostPublished(ctx context.Context, handler func(context.Context, *PublishedEvent) error) error
+type PostPublishedConsumer interface {
+	ConsumePostPublished(ctx context.Context, handler func(context.Context, *PostEvent) error) error
 }
 
 type FanoutRepository interface {
@@ -27,11 +27,11 @@ type TimelineIndex interface {
 
 type FanoutWorker struct {
 	repo     FanoutRepository
-	consumer PublishedEventConsumer
+	consumer PostPublishedConsumer
 	index    TimelineIndex
 }
 
-func NewFanoutWorker(repo FanoutRepository, consumer PublishedEventConsumer, index TimelineIndex) *FanoutWorker {
+func NewFanoutWorker(repo FanoutRepository, consumer PostPublishedConsumer, index TimelineIndex) *FanoutWorker {
 	return &FanoutWorker{repo: repo, consumer: consumer, index: index}
 }
 
@@ -39,7 +39,7 @@ func (w *FanoutWorker) Start(ctx context.Context) error {
 	return w.consumer.ConsumePostPublished(ctx, w.HandlePostPublished)
 }
 
-func (w *FanoutWorker) HandlePostPublished(ctx context.Context, event *PublishedEvent) error {
+func (w *FanoutWorker) HandlePostPublished(ctx context.Context, event *PostEvent) error {
 	if event == nil || event.PostID <= 0 {
 		return nil
 	}

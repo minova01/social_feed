@@ -10,19 +10,25 @@ import (
 var ErrLoadPostFailed = errors.New("failed to load post")
 var ErrSavePostFailed = errors.New("failed to save post")
 var ErrUpdatePostFailed = errors.New("failed to update post")
+var ErrSearchPostsFailed = errors.New("failed to search posts")
 
 type Service struct {
 	repo       domainpost.Repository
-	publisher  PublishedEventPublisher
+	publisher  PostEventPublisher
 	statReader StatReader
+	search     SearchIndex
+}
+
+type SearchIndex interface {
+	SearchPostIDs(ctx context.Context, keyword string, limit int, offset int) ([]int64, error)
+}
+
+type PostEventPublisher interface {
+	Publish(ctx context.Context, eventType string, postID int64) error
 }
 
 type StatReader interface {
 	BatchGetPostStats(ctx context.Context, postIDs []int64, fallbacks map[int64]*domainpost.Stat) (map[int64]*domainpost.Stat, error)
-}
-
-type PublishedEventPublisher interface {
-	PublishPostPublished(ctx context.Context, event *PublishedEvent) error
 }
 
 type Option func(*Service)
@@ -30,6 +36,12 @@ type Option func(*Service)
 type CreateResult struct {
 	Post    *domainpost.Post
 	Created bool
+}
+
+func WithPostEventPublisher(publisher PostEventPublisher) Option {
+	return func(service *Service) {
+		service.publisher = publisher
+	}
 }
 
 func New(repo domainpost.Repository, options ...Option) *Service {
@@ -40,15 +52,15 @@ func New(repo domainpost.Repository, options ...Option) *Service {
 	return service
 }
 
-func WithPublishedEventPublisher(publisher PublishedEventPublisher) Option {
-	return func(service *Service) {
-		service.publisher = publisher
-	}
-}
-
 func WithStatReader(reader StatReader) Option {
 	return func(service *Service) {
 		service.statReader = reader
+	}
+}
+
+func WithSearchIndex(index SearchIndex) Option {
+	return func(service *Service) {
+		service.search = index
 	}
 }
 
@@ -57,7 +69,7 @@ func (s *Service) CreatePublished(ctx context.Context, authorID int64, content s
 	if err := s.repo.Save(ctx, post); err != nil {
 		return nil, ErrSavePostFailed
 	}
-	s.publishCreatedPost(ctx, post)
+	s.publishPostEvent(ctx, domainpost.EventPublished, post.ID)
 	return &CreateResult{Post: post, Created: true}, nil
 }
 
@@ -81,17 +93,16 @@ func (s *Service) CreatePublishedIdempotently(ctx context.Context, authorID int6
 		}
 		return nil, ErrSavePostFailed
 	}
-	s.publishCreatedPost(ctx, post)
+	s.publishPostEvent(ctx, domainpost.EventPublished, post.ID)
 	return &CreateResult{Post: post, Created: true}, nil
 }
 
-func (s *Service) publishCreatedPost(ctx context.Context, post *domainpost.Post) {
+func (s *Service) publishPostEvent(ctx context.Context, eventType string, postID int64) {
 	if s.publisher == nil {
 		return
 	}
-	event := NewPublishedEvent(post.ID)
-	if err := s.publisher.PublishPostPublished(ctx, event); err != nil {
-		log.Printf("publish post.published failed: post_id=%d error=%v", post.ID, err)
+	if err := s.publisher.Publish(ctx, eventType, postID); err != nil {
+		log.Printf("publish %s failed: post_id=%d error=%v", eventType, postID, err)
 	}
 }
 
@@ -114,6 +125,38 @@ func (s *Service) ListByAuthor(ctx context.Context, authorID int64, limit int, o
 	}
 	s.overlayStats(ctx, posts)
 	return posts, nil
+}
+
+func (s *Service) Search(ctx context.Context, viewerID int64, keyword string, limit int, offset int) ([]*domainpost.FeedItem, error) {
+	postIDs, err := s.search.SearchPostIDs(ctx, keyword, limit, offset)
+	if err != nil {
+		return nil, ErrSearchPostsFailed
+	}
+	itemsByID, err := s.repo.BatchGetPublicFeedItems(ctx, viewerID, postIDs)
+	if err != nil {
+		return nil, ErrSearchPostsFailed
+	}
+	if s.statReader != nil {
+		fallbacks := make(map[int64]*domainpost.Stat, len(itemsByID))
+		for postID, item := range itemsByID {
+			fallbacks[postID] = &domainpost.Stat{PostID: postID, LikeCount: item.LikeCount, FavoriteCount: item.FavoriteCount}
+		}
+		if stats, statErr := s.statReader.BatchGetPostStats(ctx, postIDs, fallbacks); statErr == nil {
+			for postID, stat := range stats {
+				if item := itemsByID[postID]; item != nil && stat != nil {
+					item.LikeCount = stat.LikeCount
+					item.FavoriteCount = stat.FavoriteCount
+				}
+			}
+		}
+	}
+	items := make([]*domainpost.FeedItem, 0, len(postIDs))
+	for _, postID := range postIDs {
+		if item := itemsByID[postID]; item != nil {
+			items = append(items, item)
+		}
+	}
+	return items, nil
 }
 
 func (s *Service) overlayStats(ctx context.Context, posts []*domainpost.Post) {
@@ -159,5 +202,6 @@ func (s *Service) Delete(ctx context.Context, authorID int64, postID int64) erro
 		}
 		return ErrUpdatePostFailed
 	}
+	s.publishPostEvent(ctx, domainpost.EventDeleted, post.ID)
 	return nil
 }

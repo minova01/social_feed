@@ -49,6 +49,10 @@ func Load() (*Config, error) {
 			DB:       redisDB,
 		},
 		RabbitMQ: RabbitMQConfig{URL: value("RABBITMQ_URL", "")},
+		Search: SearchConfig{
+			URL:   value("ELASTICSEARCH_URL", ""),
+			Index: value("ELASTICSEARCH_INDEX", "social_posts"),
+		},
 		Upload: UploadConfig{
 			Root:          value("UPLOAD_ROOT", "./uploads"),
 			PublicBaseURL: value("PUBLIC_UPLOAD_BASE_URL", "/uploads"),
@@ -65,6 +69,8 @@ func Load() (*Config, error) {
 		{name: "MYSQL_USER", value: cfg.Database.User},
 		{name: "MYSQL_PASSWORD", value: cfg.Database.Password},
 		{name: "MYSQL_DATABASE", value: cfg.Database.Name},
+		{name: "RABBITMQ_URL", value: cfg.RabbitMQ.URL},
+		{name: "ELASTICSEARCH_URL", value: cfg.Search.URL},
 	}
 	for _, item := range required {
 		if item.value == "" {

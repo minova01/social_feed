@@ -10,6 +10,11 @@ const (
 	BigCreatorFollowerThreshold = 10000
 )
 
+const (
+	EventPublished = "post.published"
+	EventDeleted   = "post.deleted"
+)
+
 type TimelineItem struct {
 	PostID      int64 `json:"post_id"`
 	AuthorID    int64 `json:"author_id"`
