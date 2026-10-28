@@ -62,11 +62,11 @@ func Register(g *gin.Engine, cfg *infraconfig.Config, db *sql.DB) error {
 		feedCache = infracache.NewFeedCache(infracache.NewRedisClient(cfg.Redis))
 		postOptions = append(postOptions, applicationpost.WithStatReader(feedCache))
 	}
-	rabbitMQ, err := inframq.NewRabbitMQ(cfg.RabbitMQ)
+	kafkaClient, err := inframq.NewKafka(cfg.Kafka)
 	if err != nil {
 		return err
 	}
-	postOptions = append(postOptions, applicationpost.WithPostEventPublisher(rabbitMQ))
+	postOptions = append(postOptions, applicationpost.WithPostEventPublisher(kafkaClient))
 	postHandler := interfaceshttppost.New(applicationpost.New(postRepo, postOptions...))
 	followingPostService := applicationfeed.NewFollowingPostService(postRepo, feedCache)
 	hotPostService := applicationfeed.NewHotPostService(postRepo, feedCache)

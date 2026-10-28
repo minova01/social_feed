@@ -7,7 +7,7 @@ type Config struct {
 	Internal InternalConfig
 	Database DatabaseConfig
 	Redis    RedisConfig
-	RabbitMQ RabbitMQConfig
+	Kafka    KafkaConfig
 	Search   SearchConfig
 	Upload   UploadConfig
 }
@@ -39,9 +39,9 @@ type RedisConfig struct {
 	DB       int
 }
 
-// RabbitMQConfig 保存 RabbitMQ 连接和队列配置。
-type RabbitMQConfig struct {
-	URL string
+// KafkaConfig 保存 Kafka broker 地址。
+type KafkaConfig struct {
+	Brokers string
 }
 
 type SearchConfig struct {

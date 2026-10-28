@@ -202,6 +202,5 @@ func (s *Service) Delete(ctx context.Context, authorID int64, postID int64) erro
 		}
 		return ErrUpdatePostFailed
 	}
-	s.publishPostEvent(ctx, domainpost.EventDeleted, post.ID)
 	return nil
 }

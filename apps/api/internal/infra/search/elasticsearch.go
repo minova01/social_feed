@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	applicationpost "social/internal/application/post"
 	infraconfig "social/internal/infra/config"
 )
 
@@ -95,26 +96,54 @@ func (c *Client) indexExists(ctx context.Context) (bool, error) {
 	return false, responseError(response)
 }
 
-func (c *Client) UpsertPost(ctx context.Context, postID int64, content string, publishedAt int64) error {
-	response, err := c.request(ctx, http.MethodPut, c.documentPath(postID), document{PostID: postID, Content: content, PublishedAt: publishedAt})
+func (c *Client) ApplyPostChanges(ctx context.Context, changes []applicationpost.PostIndexChange) error {
+	var body bytes.Buffer
+	encoder := json.NewEncoder(&body)
+	for _, change := range changes {
+		id := strconv.FormatInt(change.PostID, 10)
+		if !change.Published {
+			if err := encoder.Encode(map[string]any{"delete": map[string]any{"_id": id}}); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := encoder.Encode(map[string]any{"index": map[string]any{"_id": id}}); err != nil {
+			return err
+		}
+		if err := encoder.Encode(document{PostID: change.PostID, Content: change.Content, PublishedAt: change.PublishedAt}); err != nil {
+			return err
+		}
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/"+url.PathEscape(c.index)+"/_bulk", &body)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/x-ndjson")
+	response, err := c.http.Do(request)
 	if err != nil {
 		return err
 	}
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusCreated {
+	if response.StatusCode != http.StatusOK {
 		return responseError(response)
 	}
-	return nil
-}
-
-func (c *Client) DeletePost(ctx context.Context, postID int64) error {
-	response, err := c.request(ctx, http.MethodDelete, c.documentPath(postID), nil)
-	if err != nil {
+	var result struct {
+		Errors bool `json:"errors"`
+		Items  []map[string]struct {
+			Status int `json:"status"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
 		return err
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusNotFound {
-		return responseError(response)
+	if result.Errors {
+		for _, item := range result.Items {
+			for operation, outcome := range item {
+				if outcome.Status >= 300 && !(operation == "delete" && outcome.Status == http.StatusNotFound) {
+					return fmt.Errorf("elasticsearch bulk %s failed with status %d", operation, outcome.Status)
+				}
+			}
+		}
 	}
 	return nil
 }
@@ -160,10 +189,6 @@ func (c *Client) SearchPostIDs(ctx context.Context, keyword string, limit int, o
 		postIDs = append(postIDs, postID)
 	}
 	return postIDs, nil
-}
-
-func (c *Client) documentPath(postID int64) string {
-	return "/" + url.PathEscape(c.index) + "/_doc/" + strconv.FormatInt(postID, 10)
 }
 
 func (c *Client) request(ctx context.Context, method string, path string, body any) (*http.Response, error) {

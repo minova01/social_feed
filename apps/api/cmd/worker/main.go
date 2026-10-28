@@ -26,8 +26,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config failed: %v", err)
 	}
-	if cfg.RabbitMQ.URL == "" {
-		log.Fatal("rabbitmq url is required for worker")
+	if cfg.Kafka.Brokers == "" {
+		log.Fatal("kafka brokers are required for worker")
 	}
 	if cfg.Redis.Addr == "" {
 		log.Fatal("redis addr is required for worker")
@@ -54,11 +54,11 @@ func main() {
 		log.Fatalf("ensure elasticsearch index failed: %v", err)
 	}
 
-	rabbitMQ, err := inframq.NewRabbitMQ(cfg.RabbitMQ)
+	kafkaClient, err := inframq.NewKafka(cfg.Kafka)
 	if err != nil {
-		log.Fatalf("init rabbitmq failed: %v", err)
+		log.Fatalf("init kafka failed: %v", err)
 	}
-	defer closeRabbitMQ(rabbitMQ)
+	defer closeKafka(kafkaClient)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -68,7 +68,7 @@ func main() {
 		}
 	}()
 
-	if err := startWorkers(ctx, cfg, gormDB, rabbitMQ, searchClient); err != nil {
+	if err := startWorkers(ctx, cfg, gormDB, kafkaClient, searchClient); err != nil {
 		log.Fatalf("start workers failed: %v", err)
 	}
 	log.Println("social worker is running")
@@ -76,16 +76,16 @@ func main() {
 	log.Println("social worker stopped")
 }
 
-func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB, rabbitMQ *inframq.RabbitMQ, searchClient *infrasearch.Client) error {
+func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB, kafkaClient *inframq.Kafka, searchClient *infrasearch.Client) error {
 	redisClient := infracache.NewRedisClient(cfg.Redis)
 	feedCache := infracache.NewFeedCache(redisClient)
 
 	postRepo := infrapost.New(gormDB)
-	postSearchWorker := applicationpost.NewSearchWorker(postRepo, rabbitMQ, searchClient)
+	postSearchWorker := applicationpost.NewSearchWorker(kafkaClient, searchClient)
 	if err := postSearchWorker.Start(ctx); err != nil {
 		return err
 	}
-	postFanoutWorker := applicationpost.NewFanoutWorker(postRepo, rabbitMQ, feedCache)
+	postFanoutWorker := applicationpost.NewFanoutWorker(postRepo, kafkaClient, feedCache)
 	return postFanoutWorker.Start(ctx)
 }
 
@@ -95,8 +95,8 @@ func closeSQL(db *sql.DB) {
 	}
 }
 
-func closeRabbitMQ(rabbitMQ *inframq.RabbitMQ) {
-	if rabbitMQ != nil {
-		_ = rabbitMQ.Close()
+func closeKafka(kafkaClient *inframq.Kafka) {
+	if kafkaClient != nil {
+		_ = kafkaClient.Close()
 	}
 }

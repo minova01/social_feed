@@ -22,7 +22,7 @@
 | API | Go、Gin、GORM |
 | 数据库 | MySQL 8.4 |
 | 缓存与 Feed 索引 | Redis 7.4 |
-| 消息队列 | RabbitMQ 3.13 |
+| 消息与数据变更 | Kafka 4.3、Canal 1.1 |
 | 全文搜索 | Elasticsearch 9 |
 | 部署 | Docker、Docker Compose |
 
@@ -35,17 +35,19 @@ flowchart LR
 
     A --> M[(MySQL)]
     A --> R[(Redis)]
-    A --> E[(Elasticsearch)]
     A --> F[(上传文件卷)]
-    A -- Post ID 事件 --> Q[RabbitMQ]
+    A -- Post ID 发布事件 --> Q[Kafka]
 
     Q --> K[Go Worker]
     K -- 读取帖子当前状态 --> M
     K -- 更新 Feed 索引 --> R
-    K -- 更新帖子搜索索引 --> E
+    M -- Row Binlog --> C[Canal]
+    C -- 帖子行变更 --> Q
+    Q --> S[Search Consumer]
+    S -- Bulk 写入 --> E[(Elasticsearch 9)]
 ```
 
-API 负责同步业务请求，MySQL 保存业务事实数据。帖子创建或删除后，API 只向 RabbitMQ 发送 Post ID；Worker 重新读取帖子当前状态，再更新 Redis Feed 索引和 Elasticsearch 搜索索引，避免使用过期的消息内容。
+API 负责同步业务请求，MySQL 保存业务事实数据。新帖子发布后，API 只向 Kafka 发送 Post ID，由 Feed Worker 回查当前状态并更新 Redis Feed 索引；帖子正文、状态及删除变更由 Canal 监听 MySQL Binlog 后发送到 Kafka，Search Consumer 批量同步到 Elasticsearch 9。
 
 ## 快速启动
 
@@ -76,7 +78,7 @@ Vite 环境变量会在镜像构建时写入前端产物，修改后需要重新
 docker compose up -d --build
 ```
 
-该命令会启动 Web、API、Worker、MySQL、Redis、RabbitMQ 和 Elasticsearch。
+该命令会启动 Web、API、Worker、MySQL、Redis、Kafka、Canal 和 Elasticsearch。
 
 ### 3. 检查状态
 
@@ -90,10 +92,7 @@ docker compose ps
 | --- | --- |
 | Web | http://localhost:5173 |
 | API 健康检查 | http://localhost:8080/health |
-| RabbitMQ 管理后台 | http://localhost:15672 |
 | Elasticsearch | http://localhost:9200 |
-
-RabbitMQ 本地默认账号和密码均为 `guest`。
 
 ### 4. 查看日志
 

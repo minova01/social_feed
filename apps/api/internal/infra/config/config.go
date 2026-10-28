@@ -48,7 +48,7 @@ func Load() (*Config, error) {
 			Password: value("REDIS_PASSWORD", ""),
 			DB:       redisDB,
 		},
-		RabbitMQ: RabbitMQConfig{URL: value("RABBITMQ_URL", "")},
+		Kafka: KafkaConfig{Brokers: value("KAFKA_BROKERS", "")},
 		Search: SearchConfig{
 			URL:   value("ELASTICSEARCH_URL", ""),
 			Index: value("ELASTICSEARCH_INDEX", "social_posts"),
@@ -69,7 +69,7 @@ func Load() (*Config, error) {
 		{name: "MYSQL_USER", value: cfg.Database.User},
 		{name: "MYSQL_PASSWORD", value: cfg.Database.Password},
 		{name: "MYSQL_DATABASE", value: cfg.Database.Name},
-		{name: "RABBITMQ_URL", value: cfg.RabbitMQ.URL},
+		{name: "KAFKA_BROKERS", value: cfg.Kafka.Brokers},
 		{name: "ELASTICSEARCH_URL", value: cfg.Search.URL},
 	}
 	for _, item := range required {

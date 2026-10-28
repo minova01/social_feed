@@ -12,7 +12,6 @@ const (
 
 const (
 	EventPublished = "post.published"
-	EventDeleted   = "post.deleted"
 )
 
 type TimelineItem struct {

@@ -2,6 +2,7 @@ services:
   mysql:
     image: mysql:8.4
     container_name: social-mysql
+    command: ["--server-id=1", "--log-bin=mysql-bin", "--binlog-format=ROW", "--binlog-row-image=FULL"]
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:-local-development-password}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-social}
@@ -29,19 +30,56 @@ services:
       timeout: 3s
       retries: 20
 
-  rabbitmq:
-    image: rabbitmq:3.13-management-alpine
-    container_name: social-rabbitmq
+  kafka:
+    image: apache/kafka:4.3.2
+    container_name: social-kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: CONTROLLER://:9093,PLAINTEXT://:19092,PLAINTEXT_HOST://:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:19092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 1
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "9092:9092"
     volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
+      - kafka_data:/var/lib/kafka/data
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 5s
-      timeout: 30s
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:19092 --list >/dev/null"]
+      interval: 10s
+      timeout: 5s
       retries: 20
+
+  canal:
+    image: canal/canal-server:v1.1.8
+    container_name: social-canal
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      canal.auto.scan: "false"
+      canal.destinations: social-post
+      canal.serverMode: kafka
+      canal.mq.servers: kafka:19092
+      canal.mq.flatMessage: "true"
+      canal.instance.master.address: mysql:3306
+      canal.instance.dbUsername: root
+      canal.instance.dbPassword: ${MYSQL_PASSWORD:-local-development-password}
+      canal.instance.connectionCharset: UTF-8
+      canal.instance.gtidon: "false"
+      canal.instance.tsdb.enable: "false"
+      canal.instance.filter.regex: social\\.post
+      canal.mq.topic: social.post.cdc
+      canal.mq.partition: "0"
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:9.5.5
@@ -71,7 +109,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      rabbitmq:
+      kafka:
         condition: service_healthy
       elasticsearch:
         condition: service_healthy
@@ -90,7 +128,7 @@ services:
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       REDIS_DB: ${REDIS_DB:-0}
-      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/}
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-kafka:19092}
       ELASTICSEARCH_URL: http://elasticsearch:9200
       ELASTICSEARCH_INDEX: ${ELASTICSEARCH_INDEX:-social_posts}
       UPLOAD_ROOT: /app/uploads
@@ -115,8 +153,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      rabbitmq:
+      kafka:
         condition: service_healthy
+      canal:
+        condition: service_started
       elasticsearch:
         condition: service_healthy
     environment:
@@ -132,7 +172,7 @@ services:
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       REDIS_DB: ${REDIS_DB:-0}
-      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/}
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-kafka:19092}
       ELASTICSEARCH_URL: http://elasticsearch:9200
       ELASTICSEARCH_INDEX: ${ELASTICSEARCH_INDEX:-social_posts}
       UPLOAD_ROOT: /app/uploads
@@ -155,6 +195,6 @@ services:
 volumes:
   mysql_data:
   redis_data:
-  rabbitmq_data:
+  kafka_data:
   elasticsearch_data:
   api_uploads:
