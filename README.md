@@ -1,6 +1,6 @@
 # Social Feed
 
-一个完整的社交帖子 Feed 项目，提供账号、发帖、关注、互动、消息、热门内容与帖子全文搜索。项目采用前后端分离架构，并通过 Docker Compose 一键启动完整运行环境。
+Social Feed 是一个前后端分离的社交信息流项目，围绕帖子提供账号、关系、互动、消息、关注流、热门流和正文搜索。MySQL 保存业务数据，Redis 保存 Feed 索引，Kafka 负责传递异步消息。Canal 监听 MySQL Binlog，并将帖子变化同步到 Elasticsearch。整个项目可以通过 Docker Compose 启动。
 
 ## 核心功能
 
@@ -12,7 +12,9 @@
 - 基于 Elasticsearch 的帖子正文搜索
 - JWT 认证、接口幂等与 Prometheus 指标
 
-关注流采用推拉结合的分发方式：普通作者发布帖子后，由 Worker 异步推送到粉丝的 Redis Inbox；粉丝量较大的作者只写入自己的 Outbox，用户读取关注流时再合并 Inbox 与所关注大 V 的 Outbox。这样既保证普通关系链的读取效率，也避免大 V 发帖时产生过大的瞬时写入压力。
+关注流采用推拉结合的分发方式。普通作者发布帖子后，Feed Worker 会异步写入粉丝的 Redis Inbox。粉丝量较大的作者只写入自己的 Outbox，等用户读取关注流时，再合并 Inbox 和已关注大 V 的 Outbox。发帖事件只传递 Post ID，Worker 消费消息时会重新读取帖子当前状态，避免使用已经过期的作者和发布时间数据。
+
+帖子搜索索引不依赖业务发帖消息。Canal 监听 MySQL Row Binlog，把帖子的新增、正文更新、状态变化和删除记录写入 Kafka。Search Worker 批量消费这些 CDC 消息，再同步到 Elasticsearch。搜索结果先按正文相关度排序，相关度相同时按发布时间排序。拿到 Post ID 后，API 会回到 MySQL 获取完整的帖子信息。
 
 ## 技术栈
 
@@ -29,25 +31,35 @@
 ## 系统架构
 
 ```mermaid
-flowchart LR
-    U[浏览器 / React] --> N[Nginx 静态资源与反向代理]
-    N --> A[Go API]
+flowchart TB
+    U[Web / React] -->|HTTP| A[Go API]
 
-    A --> M[(MySQL)]
-    A --> R[(Redis)]
-    A --> F[(上传文件卷)]
-    A -- Post ID 发布事件 --> Q[Kafka]
+    subgraph Core[业务数据与同步]
+        A -->|业务读写| M[(MySQL 8.4)]
+        A -->|图片读写| F[(上传文件卷)]
+        M -->|Row Binlog| C[Canal]
+    end
 
-    Q --> K[Go Worker]
-    K -- 读取帖子当前状态 --> M
-    K -- 更新 Feed 索引 --> R
-    M -- Row Binlog --> C[Canal]
-    C -- 帖子行变更 --> Q
-    Q --> S[Search Consumer]
-    S -- Bulk 写入 --> E[(Elasticsearch 9)]
+    subgraph Feed[关注流发布链路]
+        A -->|Post ID| K[(Kafka<br/>social.post.events)]
+        K --> FW[Feed Worker]
+        FW -->|读取帖子当前状态| M
+        FW -->|Inbox / Outbox| R[(Redis)]
+    end
+
+    subgraph Search[帖子搜索链路]
+        C -->|帖子行变更| CDC[(Kafka<br/>social.post.cdc)]
+        CDC --> SW[Search Worker]
+        SW -->|Bulk 新增 / 更新 / 删除| E[(Elasticsearch 9)]
+        A -->|正文检索| E
+        E -->|Post ID| A
+        A -->|获取完整帖子| M
+    end
+
+    A -->|关注流 / 热门流| R
 ```
 
-API 负责同步业务请求，MySQL 保存业务事实数据。新帖子发布后，API 只向 Kafka 发送 Post ID，由 Feed Worker 回查当前状态并更新 Redis Feed 索引；帖子正文、状态及删除变更由 Canal 监听 MySQL Binlog 后发送到 Kafka，Search Consumer 批量同步到 Elasticsearch 9。
+Feed 和搜索使用两个独立的 Kafka Topic。`social.post.events` 只传递新帖的 Post ID，用于 Feed 分发。`social.post.cdc` 接收 Canal 生成的帖子行变更，用来维护 Elasticsearch 索引。两个 Topic 各自服务一条链路。帖子被隐藏或删除后，对应的 CDC 消息也会把它从搜索索引中移除。
 
 ## 快速启动
 
