@@ -12,7 +12,7 @@ Social Feed 是一个前后端分离的社交信息流项目，围绕帖子提�
 - 基于 Elasticsearch 的帖子正文搜索
 - JWT 认证、接口幂等与 Prometheus 指标
 
-关注流采用推拉结合的分发方式。普通作者发布帖子后，Feed Worker 会异步写入粉丝的 Redis Inbox。粉丝量较大的作者只写入自己的 Outbox，等用户读取关注流时，再合并 Inbox 和已关注大 V 的 Outbox。发帖事件只传递 Post ID，Worker 消费消息时会重新读取帖子当前状态，避免使用已经过期的作者和发布时间数据。
+关注流采用推拉结合的分发方式。普通作者发布帖子后，Feed Worker 会异步写入粉丝的 Redis Inbox。粉丝量较大的作者只写入自己的 Outbox，等用户读取关注流时，再合并 Inbox 和已关注大 V 的 Outbox。Feed Worker 从帖子 CDC 消息中提取 Post ID，并重新读取帖子当前状态，避免使用已经过期的作者和发布时间数据。
 
 帖子搜索索引不依赖业务发帖消息。Canal 监听 MySQL Row Binlog，把帖子的新增、正文更新、状态变化和删除记录写入 Kafka。Search Worker 批量消费这些 CDC 消息，再同步到 Elasticsearch。搜索结果先按正文相关度排序，相关度相同时按发布时间排序。拿到 Post ID 后，API 会回到 MySQL 获取完整的帖子信息。
 
@@ -40,16 +40,16 @@ flowchart TB
         M -->|Row Binlog| C[Canal]
     end
 
+    C -->|帖子行变更| CDC[(Kafka<br/>social.post.cdc)]
+
     subgraph Feed[关注流发布链路]
-        A -->|Post ID| K[(Kafka<br/>social.post.events)]
-        K --> FW[Feed Worker]
+        CDC -->|独立消费组| FW[Feed Worker]
         FW -->|读取帖子当前状态| M
         FW -->|Inbox / Outbox| R[(Redis)]
     end
 
     subgraph Search[帖子搜索链路]
-        C -->|帖子行变更| CDC[(Kafka<br/>social.post.cdc)]
-        CDC --> SW[Search Worker]
+        CDC -->|独立消费组| SW[Search Worker]
         SW -->|Bulk 新增 / 更新 / 删除| E[(Elasticsearch 9)]
         A -->|正文检索| E
         E -->|Post ID| A
@@ -59,7 +59,7 @@ flowchart TB
     A -->|关注流 / 热门流| R
 ```
 
-Feed 和搜索使用两个独立的 Kafka Topic。`social.post.events` 只传递新帖的 Post ID，用于 Feed 分发。`social.post.cdc` 接收 Canal 生成的帖子行变更，用来维护 Elasticsearch 索引。两个 Topic 各自服务一条链路。帖子被隐藏或删除后，对应的 CDC 消息也会把它从搜索索引中移除。
+API 创建帖子时只写入 MySQL，不再主动发送 Kafka 消息。Canal 将 `post` 表的新增、修改和删除发送到 `social.post.cdc`。Feed Worker 和 Search Worker 使用不同的 Consumer Group 消费同一个 Topic。Feed Worker 只处理首次发布并回查 MySQL，Search Worker 负责维护 Elasticsearch 索引。
 
 ## 快速启动
 

@@ -58,7 +58,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("init kafka failed: %v", err)
 	}
-	defer closeKafka(kafkaClient)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -92,11 +91,5 @@ func startWorkers(ctx context.Context, cfg *infraconfig.Config, gormDB *gorm.DB,
 func closeSQL(db *sql.DB) {
 	if db != nil {
 		_ = db.Close()
-	}
-}
-
-func closeKafka(kafkaClient *inframq.Kafka) {
-	if kafkaClient != nil {
-		_ = kafkaClient.Close()
 	}
 }

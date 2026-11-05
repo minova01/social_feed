@@ -69,7 +69,6 @@ func Load() (*Config, error) {
 		{name: "MYSQL_USER", value: cfg.Database.User},
 		{name: "MYSQL_PASSWORD", value: cfg.Database.Password},
 		{name: "MYSQL_DATABASE", value: cfg.Database.Name},
-		{name: "KAFKA_BROKERS", value: cfg.Kafka.Brokers},
 		{name: "ELASTICSEARCH_URL", value: cfg.Search.URL},
 	}
 	for _, item := range required {

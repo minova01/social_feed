@@ -2,15 +2,11 @@ package inframq
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log"
-	"strconv"
 	"strings"
 	"time"
 
-	applicationpost "social/internal/application/post"
-	domainpost "social/internal/domain/post"
 	infraconfig "social/internal/infra/config"
 	inframetrics "social/internal/infra/metrics"
 
@@ -18,20 +14,17 @@ import (
 )
 
 const (
-	postEventsTopic = "social.post.events"
-	postCDCTopic    = "social.post.cdc"
-	feedGroup       = "social-feed-worker"
-	searchGroup     = "social-search-worker"
-	cdcBatchSize    = 200
-	cdcBatchWait    = 100 * time.Millisecond
+	postCDCTopic = "social.post.cdc"
+	feedGroup    = "social-feed-worker"
+	searchGroup  = "social-search-worker"
+	cdcBatchSize = 200
+	cdcBatchWait = 100 * time.Millisecond
 )
 
 var ErrInvalidKafkaConfig = errors.New("invalid kafka config")
-var ErrUnsupportedPostEvent = errors.New("unsupported post event")
 
 type Kafka struct {
 	brokers []string
-	writer  *kafka.Writer
 }
 
 func NewKafka(cfg infraconfig.KafkaConfig) (*Kafka, error) {
@@ -46,74 +39,19 @@ func NewKafka(cfg infraconfig.KafkaConfig) (*Kafka, error) {
 		return nil, err
 	}
 	_ = conn.Close()
-	return &Kafka{
-		brokers: brokers,
-		writer: &kafka.Writer{
-			Addr:         kafka.TCP(brokers...),
-			Topic:        postEventsTopic,
-			Balancer:     &kafka.Hash{},
-			RequiredAcks: kafka.RequireAll,
-		},
-	}, nil
+	return &Kafka{brokers: brokers}, nil
 }
 
-func (k *Kafka) Close() error {
-	if k == nil || k.writer == nil {
-		return nil
-	}
-	return k.writer.Close()
-}
-
-func (k *Kafka) Publish(ctx context.Context, eventType string, postID int64) error {
-	if eventType != domainpost.EventPublished {
-		return ErrUnsupportedPostEvent
-	}
-	body, err := json.Marshal(applicationpost.NewPostEvent(postID))
-	if err != nil {
-		return err
-	}
-	return k.writer.WriteMessages(ctx, kafka.Message{Key: []byte(strconv.FormatInt(postID, 10)), Value: body})
-}
-
-func (k *Kafka) ConsumePostPublished(ctx context.Context, handler func(context.Context, *applicationpost.PostEvent) error) error {
-	reader := k.reader(postEventsTopic, feedGroup)
-	go func() {
-		defer reader.Close()
-		for {
-			message, err := reader.FetchMessage(ctx)
-			if err != nil {
-				if ctx.Err() != nil {
-					return
-				}
-				log.Printf("consume post event failed: %v", err)
-				time.Sleep(time.Second)
-				continue
-			}
-			start := time.Now()
-			var event applicationpost.PostEvent
-			if err := json.Unmarshal(message.Value, &event); err != nil {
-				inframetrics.ObserveWorkerJob("kafka_post_published_decode", time.Since(start), err)
-				_ = reader.CommitMessages(ctx, message)
-				continue
-			}
-			for {
-				err = handler(ctx, &event)
-				inframetrics.ObserveWorkerJob("kafka_post_published_consume", time.Since(start), err)
-				if err == nil {
-					_ = reader.CommitMessages(ctx, message)
-					break
-				}
-				if !waitRetry(ctx) {
-					return
-				}
-			}
-		}
-	}()
-	return nil
+func (k *Kafka) ConsumePostPublished(ctx context.Context, handler func(context.Context, [][]byte) error) error {
+	return k.consumePostChanges(ctx, feedGroup, "kafka_post_feed_consume", handler)
 }
 
 func (k *Kafka) ConsumePostChanges(ctx context.Context, handler func(context.Context, [][]byte) error) error {
-	reader := k.reader(postCDCTopic, searchGroup)
+	return k.consumePostChanges(ctx, searchGroup, "kafka_post_search_consume", handler)
+}
+
+func (k *Kafka) consumePostChanges(ctx context.Context, group string, metric string, handler func(context.Context, [][]byte) error) error {
+	reader := k.reader(postCDCTopic, group)
 	go func() {
 		defer reader.Close()
 		for {
@@ -122,7 +60,7 @@ func (k *Kafka) ConsumePostChanges(ctx context.Context, handler func(context.Con
 				if ctx.Err() != nil {
 					return
 				}
-				log.Printf("consume post cdc failed: %v", err)
+				log.Printf("consume post cdc failed: group=%s error=%v", group, err)
 				time.Sleep(time.Second)
 				continue
 			}
@@ -133,7 +71,7 @@ func (k *Kafka) ConsumePostChanges(ctx context.Context, handler func(context.Con
 			start := time.Now()
 			for {
 				err = handler(ctx, payloads)
-				inframetrics.ObserveWorkerJob("kafka_post_cdc_consume", time.Since(start), err)
+				inframetrics.ObserveWorkerJob(metric, time.Since(start), err)
 				if err == nil {
 					_ = reader.CommitMessages(ctx, messages...)
 					break

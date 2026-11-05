@@ -3,7 +3,6 @@ package applicationpost
 import (
 	"context"
 	"errors"
-	"log"
 	domainpost "social/internal/domain/post"
 )
 
@@ -14,17 +13,12 @@ var ErrSearchPostsFailed = errors.New("failed to search posts")
 
 type Service struct {
 	repo       domainpost.Repository
-	publisher  PostEventPublisher
 	statReader StatReader
 	search     SearchIndex
 }
 
 type SearchIndex interface {
 	SearchPostIDs(ctx context.Context, keyword string, limit int, offset int) ([]int64, error)
-}
-
-type PostEventPublisher interface {
-	Publish(ctx context.Context, eventType string, postID int64) error
 }
 
 type StatReader interface {
@@ -36,12 +30,6 @@ type Option func(*Service)
 type CreateResult struct {
 	Post    *domainpost.Post
 	Created bool
-}
-
-func WithPostEventPublisher(publisher PostEventPublisher) Option {
-	return func(service *Service) {
-		service.publisher = publisher
-	}
 }
 
 func New(repo domainpost.Repository, options ...Option) *Service {
@@ -69,7 +57,6 @@ func (s *Service) CreatePublished(ctx context.Context, authorID int64, content s
 	if err := s.repo.Save(ctx, post); err != nil {
 		return nil, ErrSavePostFailed
 	}
-	s.publishPostEvent(ctx, domainpost.EventPublished, post.ID)
 	return &CreateResult{Post: post, Created: true}, nil
 }
 
@@ -93,17 +80,7 @@ func (s *Service) CreatePublishedIdempotently(ctx context.Context, authorID int6
 		}
 		return nil, ErrSavePostFailed
 	}
-	s.publishPostEvent(ctx, domainpost.EventPublished, post.ID)
 	return &CreateResult{Post: post, Created: true}, nil
-}
-
-func (s *Service) publishPostEvent(ctx context.Context, eventType string, postID int64) {
-	if s.publisher == nil {
-		return
-	}
-	if err := s.publisher.Publish(ctx, eventType, postID); err != nil {
-		log.Printf("publish %s failed: post_id=%d error=%v", eventType, postID, err)
-	}
 }
 
 func (s *Service) Get(ctx context.Context, postID int64) (*domainpost.Post, error) {

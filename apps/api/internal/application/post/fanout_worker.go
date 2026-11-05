@@ -2,8 +2,11 @@ package applicationpost
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"log"
 	domainpost "social/internal/domain/post"
+	"strings"
 )
 
 const defaultFollowerBatchSize = 500
@@ -11,7 +14,7 @@ const defaultInboxMaxLen int64 = 1000
 const defaultOutboxMaxLen int64 = 500
 
 type PostPublishedConsumer interface {
-	ConsumePostPublished(ctx context.Context, handler func(context.Context, *PostEvent) error) error
+	ConsumePostPublished(ctx context.Context, handler func(context.Context, [][]byte) error) error
 }
 
 type FanoutRepository interface {
@@ -36,7 +39,39 @@ func NewFanoutWorker(repo FanoutRepository, consumer PostPublishedConsumer, inde
 }
 
 func (w *FanoutWorker) Start(ctx context.Context) error {
-	return w.consumer.ConsumePostPublished(ctx, w.HandlePostPublished)
+	return w.consumer.ConsumePostPublished(ctx, w.HandlePostChanges)
+}
+
+func (w *FanoutWorker) HandlePostChanges(ctx context.Context, payloads [][]byte) error {
+	seen := make(map[int64]struct{})
+	for _, payload := range payloads {
+		var message canalMessage
+		if err := json.Unmarshal(payload, &message); err != nil {
+			log.Printf("ignore invalid post cdc message for feed: %v", err)
+			continue
+		}
+		if message.IsDDL || message.Table != "post" || !strings.EqualFold(message.Type, "INSERT") {
+			continue
+		}
+		changes, err := parsePostChanges(payload)
+		if err != nil {
+			log.Printf("ignore invalid post cdc message for feed: %v", err)
+			continue
+		}
+		for _, change := range changes {
+			if !change.Published {
+				continue
+			}
+			if _, exists := seen[change.PostID]; exists {
+				continue
+			}
+			seen[change.PostID] = struct{}{}
+			if err := w.HandlePostPublished(ctx, NewPostEvent(change.PostID)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (w *FanoutWorker) HandlePostPublished(ctx context.Context, event *PostEvent) error {

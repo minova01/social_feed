@@ -13,7 +13,6 @@ import (
 	infracache "social/internal/infra/cache"
 	infraconfig "social/internal/infra/config"
 	infrajwt "social/internal/infra/jwt"
-	inframq "social/internal/infra/mq"
 	infraaccount "social/internal/infra/persistence/account"
 	infrainteraction "social/internal/infra/persistence/interaction"
 	inframessage "social/internal/infra/persistence/message"
@@ -62,11 +61,6 @@ func Register(g *gin.Engine, cfg *infraconfig.Config, db *sql.DB) error {
 		feedCache = infracache.NewFeedCache(infracache.NewRedisClient(cfg.Redis))
 		postOptions = append(postOptions, applicationpost.WithStatReader(feedCache))
 	}
-	kafkaClient, err := inframq.NewKafka(cfg.Kafka)
-	if err != nil {
-		return err
-	}
-	postOptions = append(postOptions, applicationpost.WithPostEventPublisher(kafkaClient))
 	postHandler := interfaceshttppost.New(applicationpost.New(postRepo, postOptions...))
 	followingPostService := applicationfeed.NewFollowingPostService(postRepo, feedCache)
 	hotPostService := applicationfeed.NewHotPostService(postRepo, feedCache)

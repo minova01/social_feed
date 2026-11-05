@@ -109,8 +109,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
       elasticsearch:
         condition: service_healthy
     ports:
@@ -128,7 +126,6 @@ services:
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       REDIS_DB: ${REDIS_DB:-0}
-      KAFKA_BROKERS: ${KAFKA_BROKERS:-kafka:19092}
       ELASTICSEARCH_URL: http://elasticsearch:9200
       ELASTICSEARCH_INDEX: ${ELASTICSEARCH_INDEX:-social_posts}
       UPLOAD_ROOT: /app/uploads
