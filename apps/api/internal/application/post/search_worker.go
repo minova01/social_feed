@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 )
@@ -38,6 +37,19 @@ type canalMessage struct {
 	Data  []map[string]string `json:"data"`
 }
 
+type InvalidMessagesError struct {
+	Indexes []int
+	Cause   error
+}
+
+func (e *InvalidMessagesError) Error() string {
+	return e.Cause.Error()
+}
+
+func (e *InvalidMessagesError) FailedMessageIndexes() []int {
+	return e.Indexes
+}
+
 func NewSearchWorker(consumer PostChangeConsumer, index SearchIndexWriter) *SearchWorker {
 	return &SearchWorker{consumer: consumer, index: index}
 }
@@ -49,10 +61,13 @@ func (w *SearchWorker) Start(ctx context.Context) error {
 func (w *SearchWorker) HandlePostChanged(ctx context.Context, payloads [][]byte) error {
 	changes := make(map[int64]PostIndexChange)
 	order := make([]int64, 0, len(payloads))
-	for _, payload := range payloads {
+	invalid := make([]int, 0)
+	var invalidCause error
+	for index, payload := range payloads {
 		parsed, err := parsePostChanges(payload)
 		if err != nil {
-			log.Printf("ignore invalid post cdc message: %v", err)
+			invalid = append(invalid, index)
+			invalidCause = err
 			continue
 		}
 		for _, change := range parsed {
@@ -66,10 +81,15 @@ func (w *SearchWorker) HandlePostChanged(ctx context.Context, payloads [][]byte)
 	for _, postID := range order {
 		batch = append(batch, changes[postID])
 	}
-	if len(batch) == 0 {
-		return nil
+	if len(batch) > 0 {
+		if err := w.index.ApplyPostChanges(ctx, batch); err != nil {
+			return err
+		}
 	}
-	return w.index.ApplyPostChanges(ctx, batch)
+	if len(invalid) > 0 {
+		return &InvalidMessagesError{Indexes: invalid, Cause: invalidCause}
+	}
+	return nil
 }
 
 func parsePostChanges(payload []byte) ([]PostIndexChange, error) {

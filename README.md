@@ -46,11 +46,13 @@ flowchart TB
         CDC -->|独立消费组| FW[Feed Worker]
         FW -->|读取帖子当前状态| M
         FW -->|Inbox / Outbox| R[(Redis)]
+        FW -->|5 次失败| FDLQ[(Feed DLQ)]
     end
 
     subgraph Search[帖子搜索链路]
         CDC -->|独立消费组| SW[Search Worker]
         SW -->|Bulk 新增 / 更新 / 删除| E[(Elasticsearch 9)]
+        SW -->|5 次失败| SDLQ[(Search DLQ)]
         A -->|正文检索| E
         E -->|Post ID| A
         A -->|获取完整帖子| M
@@ -59,7 +61,7 @@ flowchart TB
     A -->|关注流 / 热门流| R
 ```
 
-API 创建帖子时只写入 MySQL，不再主动发送 Kafka 消息。Canal 将 `post` 表的新增、修改和删除发送到 `social.post.cdc`。Feed Worker 和 Search Worker 使用不同的 Consumer Group 消费同一个 Topic。Feed Worker 只处理首次发布并回查 MySQL，Search Worker 负责维护 Elasticsearch 索引。
+API 创建帖子时只写入 MySQL，不再主动发送 Kafka 消息。Canal 将 `post` 表的新增、修改和删除发送到 `social.post.cdc`。Feed Worker 和 Search Worker 使用不同的 Consumer Group 消费同一个 Topic。Feed Worker 只处理首次发布并回查 MySQL，Search Worker 负责维护 Elasticsearch 索引。两个 Worker 处理失败时最多尝试 5 次，之后分别写入独立 DLQ，DLQ 写入成功后才提交原消息偏移量。
 
 ## 快速启动
 

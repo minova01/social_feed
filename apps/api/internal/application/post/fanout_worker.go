@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
 	domainpost "social/internal/domain/post"
 	"strings"
 )
@@ -44,10 +43,13 @@ func (w *FanoutWorker) Start(ctx context.Context) error {
 
 func (w *FanoutWorker) HandlePostChanges(ctx context.Context, payloads [][]byte) error {
 	seen := make(map[int64]struct{})
-	for _, payload := range payloads {
+	invalid := make([]int, 0)
+	var invalidCause error
+	for index, payload := range payloads {
 		var message canalMessage
 		if err := json.Unmarshal(payload, &message); err != nil {
-			log.Printf("ignore invalid post cdc message for feed: %v", err)
+			invalid = append(invalid, index)
+			invalidCause = err
 			continue
 		}
 		if message.IsDDL || message.Table != "post" || !strings.EqualFold(message.Type, "INSERT") {
@@ -55,7 +57,8 @@ func (w *FanoutWorker) HandlePostChanges(ctx context.Context, payloads [][]byte)
 		}
 		changes, err := parsePostChanges(payload)
 		if err != nil {
-			log.Printf("ignore invalid post cdc message for feed: %v", err)
+			invalid = append(invalid, index)
+			invalidCause = err
 			continue
 		}
 		for _, change := range changes {
@@ -70,6 +73,9 @@ func (w *FanoutWorker) HandlePostChanges(ctx context.Context, payloads [][]byte)
 				return err
 			}
 		}
+	}
+	if len(invalid) > 0 {
+		return &InvalidMessagesError{Indexes: invalid, Cause: invalidCause}
 	}
 	return nil
 }
