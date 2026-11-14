@@ -3,18 +3,38 @@ package applicationpost
 import (
 	"context"
 	"errors"
+	"log"
 	domainpost "social/internal/domain/post"
+	"time"
 )
 
 var ErrLoadPostFailed = errors.New("failed to load post")
 var ErrSavePostFailed = errors.New("failed to save post")
 var ErrUpdatePostFailed = errors.New("failed to update post")
 var ErrSearchPostsFailed = errors.New("failed to search posts")
+var ErrPostRateLimited = errors.New("post rate limited")
+
+type RateLimitError struct {
+	RetryAfter time.Duration
+}
+
+func (e *RateLimitError) Error() string {
+	return ErrPostRateLimited.Error()
+}
+
+func (e *RateLimitError) Unwrap() error {
+	return ErrPostRateLimited
+}
 
 type Service struct {
-	repo       domainpost.Repository
-	statReader StatReader
-	search     SearchIndex
+	repo        domainpost.Repository
+	statReader  StatReader
+	search      SearchIndex
+	rateLimiter PostRateLimiter
+}
+
+type PostRateLimiter interface {
+	AllowPost(ctx context.Context, authorID int64, idempotencyKey string) (bool, time.Duration, error)
 }
 
 type SearchIndex interface {
@@ -52,7 +72,16 @@ func WithSearchIndex(index SearchIndex) Option {
 	}
 }
 
+func WithPostRateLimiter(limiter PostRateLimiter) Option {
+	return func(service *Service) {
+		service.rateLimiter = limiter
+	}
+}
+
 func (s *Service) CreatePublished(ctx context.Context, authorID int64, content string, imageURLs []string) (*CreateResult, error) {
+	if err := s.checkPostRateLimit(ctx, authorID, ""); err != nil {
+		return nil, err
+	}
 	post := domainpost.NewPublished(authorID, content, imageURLs, "")
 	if err := s.repo.Save(ctx, post); err != nil {
 		return nil, ErrSavePostFailed
@@ -68,6 +97,9 @@ func (s *Service) CreatePublishedIdempotently(ctx context.Context, authorID int6
 	if !errors.Is(err, domainpost.ErrPostNotFound) {
 		return nil, ErrLoadPostFailed
 	}
+	if err := s.checkPostRateLimit(ctx, authorID, idempotencyKey); err != nil {
+		return nil, err
+	}
 
 	post := domainpost.NewPublished(authorID, content, imageURLs, idempotencyKey)
 	if err := s.repo.Save(ctx, post); err != nil {
@@ -81,6 +113,21 @@ func (s *Service) CreatePublishedIdempotently(ctx context.Context, authorID int6
 		return nil, ErrSavePostFailed
 	}
 	return &CreateResult{Post: post, Created: true}, nil
+}
+
+func (s *Service) checkPostRateLimit(ctx context.Context, authorID int64, idempotencyKey string) error {
+	if s.rateLimiter == nil {
+		return nil
+	}
+	allowed, retryAfter, err := s.rateLimiter.AllowPost(ctx, authorID, idempotencyKey)
+	if err != nil {
+		log.Printf("check post rate limit failed: author_id=%d error=%v", authorID, err)
+		return nil
+	}
+	if !allowed {
+		return &RateLimitError{RetryAfter: retryAfter}
+	}
+	return nil
 }
 
 func (s *Service) Get(ctx context.Context, postID int64) (*domainpost.Post, error) {

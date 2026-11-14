@@ -6,7 +6,9 @@ import (
 	applicationpost "social/internal/application/post"
 	domainpost "social/internal/domain/post"
 	interfaceshttpmiddleware "social/internal/interfaces/http/middleware"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -203,7 +205,16 @@ func responseFromDomain(post *domainpost.Post) postResponse {
 }
 
 func writePostError(c *gin.Context, err error) {
+	var rateLimitErr *applicationpost.RateLimitError
 	switch {
+	case errors.As(err, &rateLimitErr):
+		retryAfter := max(int64((rateLimitErr.RetryAfter+time.Second-1)/time.Second), 1)
+		c.Header("Retry-After", strconv.FormatInt(retryAfter, 10))
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"code":        "POST_RATE_LIMITED",
+			"error":       "post rate limited",
+			"retry_after": retryAfter,
+		})
 	case errors.Is(err, domainpost.ErrPostNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "post not found"})
 	case errors.Is(err, domainpost.ErrPostPermissionDenied):

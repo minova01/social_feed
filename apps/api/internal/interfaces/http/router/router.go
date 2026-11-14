@@ -58,8 +58,10 @@ func Register(g *gin.Engine, cfg *infraconfig.Config, db *sql.DB) error {
 	postOptions = append(postOptions, applicationpost.WithSearchIndex(searchClient))
 	var feedCache *infracache.FeedCache
 	if cfg.Redis.Addr != "" {
-		feedCache = infracache.NewFeedCache(infracache.NewRedisClient(cfg.Redis))
+		redisClient := infracache.NewRedisClient(cfg.Redis)
+		feedCache = infracache.NewFeedCache(redisClient)
 		postOptions = append(postOptions, applicationpost.WithStatReader(feedCache))
+		postOptions = append(postOptions, applicationpost.WithPostRateLimiter(infracache.NewPostRateLimiter(redisClient)))
 	}
 	postHandler := interfaceshttppost.New(applicationpost.New(postRepo, postOptions...))
 	followingPostService := applicationfeed.NewFollowingPostService(postRepo, feedCache)
